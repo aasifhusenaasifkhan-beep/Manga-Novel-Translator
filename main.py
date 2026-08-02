@@ -1,148 +1,417 @@
-import os, zipfile, shutil
+import os
 from kivy.app import App
+from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
-from kivy.uix.tabbedpanel import TabbedPanel, TabbedPanelHeader
-from kivy.graphics import Color, Rectangle
+from kivy.uix.popup import Popup
+from kivy.uix.filechooser import FileChooserListView
+from kivy.uix.image import Image as KivyImage
 from kivy.core.window import Window
-from translator_engine import run_phase1, run_phase2, create_final_zip
+from kivy.metrics import dp
 
-# Set Dark Theme Background
+from translator_engine import (
+    run_phase1, run_phase2, create_final_zip,
+    convert_to_images, get_page_paths
+)
+
 Window.clearcolor = (0.07, 0.07, 0.09, 1)
 
-class MangaTranslatorUI(TabbedPanel):
+# ---------- Storage root (works for real Android device) ----------
+if os.path.exists("/storage/emulated/0"):
+    STORAGE_ROOT = "/storage/emulated/0"
+elif os.path.exists("/sdcard"):
+    STORAGE_ROOT = "/sdcard"
+else:
+    STORAGE_ROOT = os.path.expanduser("~")
+
+WORK_DIR = "workspace"
+
+# ---------- Try requesting Android runtime storage permission ----------
+def request_android_permissions():
+    try:
+        from android.permissions import request_permissions, Permission
+        request_permissions([
+            Permission.READ_EXTERNAL_STORAGE,
+            Permission.WRITE_EXTERNAL_STORAGE,
+        ])
+    except Exception:
+        pass  # not running on Android (e.g. desktop testing) — safe to ignore
+
+
+def make_button(text, color, callback=None, height=50):
+    btn = Button(
+        text=text, size_hint_y=None, height=dp(height),
+        background_color=color, background_normal=''
+    )
+    if callback:
+        btn.bind(on_release=callback)
+    return btn
+
+
+# ============================================================
+#  Reusable File Picker Popup
+# ============================================================
+class FilePickerPopup(Popup):
+    def __init__(self, on_select, filters=None, **kwargs):
+        super().__init__(**kwargs)
+        self.title = "Select File"
+        self.size_hint = (0.95, 0.95)
+        self.on_select_callback = on_select
+
+        layout = BoxLayout(orientation='vertical', spacing=8, padding=8)
+
+        self.chooser = FileChooserListView(
+            path=STORAGE_ROOT,
+            filters=filters or ['*.pdf', '*.zip', '*.jpg', '*.jpeg', '*.png'],
+            dirselect=False,
+        )
+        layout.add_widget(self.chooser)
+
+        self.path_label = Label(
+            text="No file selected", size_hint_y=None, height=dp(30),
+            color=(0.7, 0.7, 0.7, 1), font_size='12sp'
+        )
+        self.chooser.bind(selection=self.on_selection_change)
+        layout.add_widget(self.path_label)
+
+        btn_row = BoxLayout(size_hint_y=None, height=dp(50), spacing=8)
+        select_btn = make_button("Select", (0.2, 0.6, 0.3, 1), self.confirm_selection)
+        cancel_btn = make_button("Cancel", (0.6, 0.2, 0.2, 1), lambda x: self.dismiss())
+        btn_row.add_widget(select_btn)
+        btn_row.add_widget(cancel_btn)
+        layout.add_widget(btn_row)
+
+        self.content = layout
+
+    def on_selection_change(self, instance, selection):
+        if selection:
+            self.path_label.text = os.path.basename(selection[0])
+
+    def confirm_selection(self, instance):
+        if self.chooser.selection:
+            selected_path = self.chooser.selection[0]
+            self.dismiss()
+            self.on_select_callback(selected_path)
+
+
+# ============================================================
+#  Home Screen — choose Old (Auto) or Manual mode
+# ============================================================
+class HomeScreen(Screen):
     def __init__(self, **kwargs):
-        super(MangaTranslatorUI, self).__init__(**kwargs)
-        self.do_default_tab = False
-        self.background_color = (0.1, 0.1, 0.12, 1)
+        super().__init__(**kwargs)
+        layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
 
-        # Tab 1: Workflow Tab
-        tab_main = TabbedPanelHeader(text='🎨 Workflow')
-        tab_main.content = self.create_workflow_tab()
-        self.add_widget(tab_main)
+        title = Label(
+            text="[b]Manga & Novel Offline Subber Pro[/b]",
+            markup=True, font_size='22sp', size_hint_y=None, height=dp(50),
+            color=(0.7, 0.5, 1, 1)
+        )
+        layout.add_widget(title)
+        layout.add_widget(Label(
+            text="Ek mode choose karein:", font_size='14sp',
+            size_hint_y=None, height=dp(30), color=(0.8, 0.8, 0.8, 1)
+        ))
 
-        # Tab 2: Settings Tab
-        tab_settings = TabbedPanelHeader(text='⚙️ Settings & API')
-        tab_settings.content = self.create_settings_tab()
-        self.add_widget(tab_settings)
+        btn_old = make_button(
+            "Old Mode (Automatic)", (0.4, 0.2, 0.8, 1),
+            lambda x: self.goto('old_mode'), height=60
+        )
+        btn_manual = make_button(
+            "Manual Mode (Bubble Select)", (0.1, 0.6, 0.4, 1),
+            lambda x: self.goto('manual_mode'), height=60
+        )
+        layout.add_widget(btn_old)
+        layout.add_widget(btn_manual)
+        layout.add_widget(Label())  # spacer
 
-    def create_workflow_tab(self):
+        self.add_widget(layout)
+
+    def goto(self, screen_name):
+        self.manager.transition = SlideTransition(direction='left')
+        self.manager.current = screen_name
+
+
+# ============================================================
+#  Old Mode Screen (Automatic pipeline) — file picker fixed
+# ============================================================
+class OldModeScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selected_file = ""
+        self.selected_txt = ""
+
+        outer = BoxLayout(orientation='vertical')
+        outer.add_widget(self.build_topbar("Old Mode (Automatic)"))
+
         scroll = ScrollView(size_hint=(1, 1))
         layout = BoxLayout(orientation='vertical', padding=15, spacing=12, size_hint_y=None)
         layout.bind(minimum_height=layout.setter('height'))
 
-        # Header Title
-        title = Label(
-            text="[b]Manga & Novel Offline Subber Pro[/b]", 
-            markup=True, font_size='22sp', size_hint_y=None, height=40, color=(0.7, 0.5, 1, 1)
+        # Step 1: pick source file
+        layout.add_widget(Label(
+            text="Step 1: Manga file (PDF/ZIP/JPG) select karein",
+            font_size='14sp', size_hint_y=None, height=dp(25), color=(0.8, 0.8, 0.8, 1)
+        ))
+        self.file_label = Label(
+            text="Koi file select nahi hui", size_hint_y=None, height=dp(35),
+            color=(0.6, 0.6, 0.6, 1), font_size='12sp'
         )
-        layout.add_widget(title)
+        layout.add_widget(self.file_label)
+        layout.add_widget(make_button(
+            "Browse File", (0.2, 0.4, 0.7, 1), self.open_file_picker
+        ))
 
-        # File Input Box (Manual Path / Download Picker)
-        layout.add_widget(Label(text="File Path (PDF/ZIP/JPG):", font_size='14sp', size_hint_y=None, height=25, color=(0.8, 0.8, 0.8, 1)))
-        self.input_file_path = TextInput(
-            text="/sdcard/Download/input.pdf", multiline=False, size_hint_y=None, height=45,
-            background_color=(0.15, 0.15, 0.2, 1), foreground_color=(1, 1, 1, 1)
+        btn_phase1 = make_button(
+            "Step 2: Extract Text & Clean Pages", (0.4, 0.2, 0.8, 1),
+            self.process_phase1
         )
-        layout.add_widget(self.input_file_path)
-
-        # Step 1 Button
-        btn_phase1 = Button(
-            text="🚀 Step 1: Extract Text & Clean Pages", size_hint_y=None, height=50,
-            background_color=(0.4, 0.2, 0.8, 1), background_normal=''
-        )
-        btn_phase1.bind(on_release=self.process_phase1)
         layout.add_widget(btn_phase1)
 
-        # Status Label
-        self.status1 = Label(text="Status: Ready", font_size='12sp', size_hint_y=None, height=35, color=(0.6, 0.6, 0.6, 1))
+        self.status1 = Label(
+            text="Status: Ready", font_size='12sp', size_hint_y=None, height=dp(60),
+            color=(0.6, 0.6, 0.6, 1)
+        )
+        self.status1.text_size = (Window.width - 40, None)
         layout.add_widget(self.status1)
 
-        # Step 2: Translated TXT Input
-        layout.add_widget(Label(text="Translated TXT File Path:", font_size='14sp', size_hint_y=None, height=25, color=(0.8, 0.8, 0.8, 1)))
-        self.input_txt_path = TextInput(
-            text="/sdcard/Download/translate_me.txt", multiline=False, size_hint_y=None, height=45,
-            background_color=(0.15, 0.15, 0.2, 1), foreground_color=(1, 1, 1, 1)
+        # Step 3: translated txt
+        layout.add_widget(Label(
+            text="Step 3: Translated TXT file select karein",
+            font_size='14sp', size_hint_y=None, height=dp(25), color=(0.8, 0.8, 0.8, 1)
+        ))
+        self.txt_label = Label(
+            text="Koi TXT select nahi hui", size_hint_y=None, height=dp(35),
+            color=(0.6, 0.6, 0.6, 1), font_size='12sp'
         )
-        layout.add_widget(self.input_txt_path)
+        layout.add_widget(self.txt_label)
+        layout.add_widget(make_button(
+            "Browse TXT", (0.2, 0.4, 0.7, 1), self.open_txt_picker
+        ))
 
-        # Step 3 Button
-        btn_phase2 = Button(
-            text="🎯 Step 2: Render Translated Manga Pages", size_hint_y=None, height=50,
-            background_color=(0.1, 0.6, 0.4, 1), background_normal=''
+        btn_phase2 = make_button(
+            "Step 4: Render Translated Pages", (0.1, 0.6, 0.4, 1),
+            self.process_phase2
         )
-        btn_phase2.bind(on_release=self.process_phase2)
         layout.add_widget(btn_phase2)
 
-        # Step 4 Button (Export ZIP)
-        btn_export = Button(
-            text="📦 Step 3: Export Final Translated ZIP", size_hint_y=None, height=50,
-            background_color=(0.8, 0.4, 0.1, 1), background_normal=''
+        btn_export = make_button(
+            "Step 5: Export Final ZIP", (0.8, 0.4, 0.1, 1),
+            self.process_export
         )
-        btn_export.bind(on_release=self.process_export)
         layout.add_widget(btn_export)
 
         scroll.add_widget(layout)
-        return scroll
+        outer.add_widget(scroll)
+        self.add_widget(outer)
 
-    def create_settings_tab(self):
-        layout = BoxLayout(orientation='vertical', padding=20, spacing=15)
+    def build_topbar(self, title_text):
+        bar = BoxLayout(size_hint_y=None, height=dp(50), padding=(10, 5))
+        back_btn = make_button("< Back", (0.2, 0.2, 0.25, 1), self.go_home, height=40)
+        back_btn.size_hint_x = 0.3
+        bar.add_widget(back_btn)
+        bar.add_widget(Label(text=title_text, font_size='16sp', color=(1, 1, 1, 1)))
+        return bar
 
-        layout.add_widget(Label(text="[b]API Key & Prompt Settings[/b]", markup=True, font_size='18sp', size_hint_y=None, height=40, color=(0.7, 0.5, 1, 1)))
+    def go_home(self, instance):
+        self.manager.transition = SlideTransition(direction='right')
+        self.manager.current = 'home'
 
-        layout.add_widget(Label(text="API Key (Gemini / OpenAI / DeepL):", size_hint_y=None, height=25))
-        self.api_key_input = TextInput(password=True, multiline=False, size_hint_y=None, height=45, background_color=(0.15, 0.15, 0.2, 1), foreground_color=(1, 1, 1, 1))
-        layout.add_widget(self.api_key_input)
-
-        layout.add_widget(Label(text="System Prompt (Introduction):", size_hint_y=None, height=25))
-        self.prompt_input = TextInput(
-            text="Translate Japanese Manga dialogues into Hindi naturally keeping comic slang.",
-            multiline=True, size_hint_y=None, height=100, background_color=(0.15, 0.15, 0.2, 1), foreground_color=(1, 1, 1, 1)
+    def open_file_picker(self, instance):
+        popup = FilePickerPopup(
+            on_select=self.set_selected_file,
+            filters=['*.pdf', '*.zip', '*.jpg', '*.jpeg', '*.png']
         )
-        layout.add_widget(self.prompt_input)
+        popup.open()
 
-        btn_save = Button(text="💾 Save Settings", size_hint_y=None, height=50, background_color=(0.2, 0.5, 0.9, 1), background_normal='')
-        layout.add_widget(btn_save)
+    def set_selected_file(self, path):
+        self.selected_file = path
+        self.file_label.text = f"Selected: {os.path.basename(path)}"
 
-        return layout
+    def open_txt_picker(self, instance):
+        popup = FilePickerPopup(on_select=self.set_selected_txt, filters=['*.txt'])
+        popup.open()
+
+    def set_selected_txt(self, path):
+        self.selected_txt = path
+        self.txt_label.text = f"Selected: {os.path.basename(path)}"
 
     def process_phase1(self, instance):
-        file_path = self.input_file_path.text.strip()
-        if not os.path.exists(file_path):
-            self.status1.text = f"❌ File nahi mili: {file_path}"
+        if not self.selected_file or not os.path.exists(self.selected_file):
+            self.status1.text = "Pehle ek file select karein (Browse File button)"
             return
-        self.status1.text = "⏳ Processing Phase 1... Wait karein!"
+        self.status1.text = "Processing... Wait karein!"
         try:
-            txt_path = run_phase1(file_path)
-            self.status1.text = f"✅ Phase 1 Done! TXT saved to:\n{txt_path}"
+            txt_path = run_phase1(self.selected_file)
+            self.status1.text = f"Phase 1 Done! TXT saved:\n{txt_path}"
         except Exception as e:
-            self.status1.text = f"❌ Error: {str(e)}"
+            self.status1.text = f"Error: {str(e)}"
 
     def process_phase2(self, instance):
-        txt_path = self.input_txt_path.text.strip()
-        if not os.path.exists(txt_path):
-            self.status1.text = f"❌ Translated TXT nahi mila: {txt_path}"
+        if not self.selected_txt or not os.path.exists(self.selected_txt):
+            self.status1.text = "Pehle translated TXT select karein"
             return
-        self.status1.text = "⏳ Rendering Manga Pages... Wait karein!"
+        self.status1.text = "Rendering pages... Wait karein!"
         try:
-            res = run_phase2(txt_path)
-            self.status1.text = f"✅ Manga Rendered Successfully in 'final_pages'!"
+            run_phase2(self.selected_txt)
+            self.status1.text = "Manga rendered successfully!"
         except Exception as e:
-            self.status1.text = f"❌ Error: {str(e)}"
+            self.status1.text = f"Error: {str(e)}"
 
     def process_export(self, instance):
         try:
             zip_path = create_final_zip()
-            self.status1.text = f"🎉 Final ZIP Exported To:\n{zip_path}"
+            self.status1.text = f"Exported to:\n{zip_path}"
         except Exception as e:
-            self.status1.text = f"❌ Export Error: {str(e)}"
+            self.status1.text = f"Export Error: {str(e)}"
 
+
+# ============================================================
+#  Manual Mode Screen — format pick, file pick, page gallery
+# ============================================================
+class ManualModeScreen(Screen):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selected_file = ""
+        self.pages = []
+
+        outer = BoxLayout(orientation='vertical')
+        outer.add_widget(self.build_topbar())
+
+        self.body = BoxLayout(orientation='vertical', padding=15, spacing=12)
+        self.show_format_step()
+        outer.add_widget(self.body)
+
+        self.add_widget(outer)
+
+    def build_topbar(self):
+        bar = BoxLayout(size_hint_y=None, height=dp(50), padding=(10, 5))
+        back_btn = make_button("< Back", (0.2, 0.2, 0.25, 1), self.go_home, height=40)
+        back_btn.size_hint_x = 0.3
+        bar.add_widget(back_btn)
+        bar.add_widget(Label(text="Manual Mode", font_size='16sp', color=(1, 1, 1, 1)))
+        return bar
+
+    def go_home(self, instance):
+        self.manager.transition = SlideTransition(direction='right')
+        self.manager.current = 'home'
+
+    def clear_body(self):
+        self.body.clear_widgets()
+
+    # ---------- Step A: format select ----------
+    def show_format_step(self):
+        self.clear_body()
+        self.body.add_widget(Label(
+            text="File format select karein:", font_size='16sp',
+            size_hint_y=None, height=dp(35), color=(0.8, 0.8, 0.8, 1)
+        ))
+        row = BoxLayout(size_hint_y=None, height=dp(60), spacing=10)
+        row.add_widget(make_button("PDF", (0.4, 0.2, 0.8, 1),
+                                    lambda x: self.open_picker(['*.pdf'])))
+        row.add_widget(make_button("ZIP", (0.2, 0.5, 0.7, 1),
+                                    lambda x: self.open_picker(['*.zip'])))
+        row.add_widget(make_button("JPG/PNG", (0.1, 0.6, 0.4, 1),
+                                    lambda x: self.open_picker(['*.jpg', '*.jpeg', '*.png'])))
+        self.body.add_widget(row)
+        self.body.add_widget(Label())  # spacer
+
+    def open_picker(self, filters):
+        popup = FilePickerPopup(on_select=self.on_file_selected, filters=filters)
+        popup.open()
+
+    def on_file_selected(self, path):
+        self.selected_file = path
+        self.show_loading_step()
+
+    # ---------- Step B: converting ----------
+    def show_loading_step(self):
+        self.clear_body()
+        self.body.add_widget(Label(
+            text=f"Converting to pages...\n{os.path.basename(self.selected_file)}",
+            font_size='14sp', color=(0.8, 0.8, 0.8, 1)
+        ))
+        from kivy.clock import Clock
+        Clock.schedule_once(lambda dt: self.do_convert(), 0.3)
+
+    def do_convert(self):
+        try:
+            convert_to_images(self.selected_file, os.path.join(WORK_DIR, "temp_pages"))
+            self.pages = get_page_paths(os.path.join(WORK_DIR, "temp_pages"))
+            self.show_gallery_step()
+        except Exception as e:
+            self.clear_body()
+            self.body.add_widget(Label(text=f"Error: {str(e)}", color=(1, 0.4, 0.4, 1)))
+            self.body.add_widget(make_button("Try Again", (0.4, 0.2, 0.8, 1),
+                                              lambda x: self.show_format_step()))
+
+    # ---------- Step C: page gallery ----------
+    def show_gallery_step(self):
+        self.clear_body()
+        if not self.pages:
+            self.body.add_widget(Label(text="Koi pages nahi mile is file mein",
+                                        color=(1, 0.4, 0.4, 1)))
+            self.body.add_widget(make_button("Try Again", (0.4, 0.2, 0.8, 1),
+                                              lambda x: self.show_format_step()))
+            return
+
+        self.body.add_widget(Label(
+            text=f"{len(self.pages)} pages mile — tap karke open karein",
+            font_size='14sp', size_hint_y=None, height=dp(30), color=(0.8, 0.8, 0.8, 1)
+        ))
+
+        scroll = ScrollView(size_hint=(1, 1))
+        grid = GridLayout(cols=1, size_hint_y=None, spacing=6)
+        grid.bind(minimum_height=grid.setter('height'))
+
+        for idx, page_path in enumerate(self.pages):
+            row = BoxLayout(size_hint_y=None, height=dp(70), spacing=8, padding=(5, 5))
+            thumb = KivyImage(source=page_path, size_hint_x=None, width=dp(55))
+            label = Label(text=f"Page {idx+1:02d}\n{os.path.basename(page_path)}",
+                          font_size='12sp', halign='left', valign='middle')
+            label.bind(size=lambda inst, val: setattr(inst, 'text_size', val))
+            row.add_widget(thumb)
+            row.add_widget(label)
+            row.add_widget(make_button("Open >", (0.3, 0.3, 0.35, 1),
+                                        lambda x, p=page_path: self.open_viewer(p),
+                                        height=40))
+            grid.add_widget(row)
+
+        scroll.add_widget(grid)
+        self.body.add_widget(scroll)
+
+    # ---------- Step D: full-screen viewer ----------
+    def open_viewer(self, page_path):
+        popup = Popup(title=os.path.basename(page_path), size_hint=(0.98, 0.98))
+        layout = BoxLayout(orientation='vertical')
+        img = KivyImage(source=page_path, allow_stretch=True)
+        layout.add_widget(img)
+        layout.add_widget(Label(
+            text="Bubble color-pick / tap-to-mark tools agle update mein aayenge",
+            size_hint_y=None, height=dp(30), font_size='11sp', color=(0.6, 0.6, 0.6, 1)
+        ))
+        close_btn = make_button("Close", (0.6, 0.2, 0.2, 1), lambda x: popup.dismiss())
+        layout.add_widget(close_btn)
+        popup.content = layout
+        popup.open()
+
+
+# ============================================================
+#  App
+# ============================================================
 class MangaApp(App):
     def build(self):
-        return MangaTranslatorUI()
+        request_android_permissions()
+        sm = ScreenManager()
+        sm.add_widget(HomeScreen(name='home'))
+        sm.add_widget(OldModeScreen(name='old_mode'))
+        sm.add_widget(ManualModeScreen(name='manual_mode'))
+        return sm
+
 
 if __name__ == '__main__':
     MangaApp().run()
