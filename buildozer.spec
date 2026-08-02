@@ -13,7 +13,6 @@ orientation = portrait
 fullscreen = 0
 android.permissions = READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, MANAGE_EXTERNAL_STORAGE, INTERNET
 
-# API alignment configs
 android.api = 33
 android.build_tools_version = 33.0.2
 android.minapi = 24
