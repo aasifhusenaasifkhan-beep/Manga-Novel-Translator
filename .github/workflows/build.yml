@@ -7,30 +7,30 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-python-version: '3.10'
+          python-version: '3.10'
 
       - name: Install Buildozer & Dependencies
         run: |
           sudo apt update
-          sudo apt install -y ccache git libffi-dev libssl-dev python3-dev build-essential libltdl-dev libffi-dev libssl-dev
+          sudo apt install -y ccache git libffi-dev libssl-dev python3-dev build-essential libltdl-dev
           pip install --upgrade pip
-          pip install buildozer cython
+          pip install buildozer cython==0.29.33
 
       - name: Build APK with Buildozer
         run: |
           buildozer -v android debug
 
       - name: Upload APK Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: MangaTranslator-APK
           path: bin/*.apk
