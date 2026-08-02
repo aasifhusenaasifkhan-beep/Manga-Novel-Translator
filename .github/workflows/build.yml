@@ -43,8 +43,7 @@ jobs:
             pkg-config \
             cmake \
             zip \
-            unzip \
-            p4a
+            unzip
 
       - name: Install Buildozer & Cython
         run: |
@@ -53,7 +52,7 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          # Accept SDK licenses & build
+          # Automatically accept SDK licenses and build debug APK
           yes | buildozer -v android debug
 
       - name: Upload APK Artifact
