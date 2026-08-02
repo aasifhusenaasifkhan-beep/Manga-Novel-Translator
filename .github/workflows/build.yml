@@ -50,6 +50,14 @@ jobs:
           python -m pip install --upgrade pip setuptools
           pip install buildozer "cython<3.0.0"
 
+      - name: Pre-download recipe dependencies (bypass 502 Savannah errors)
+        run: |
+          mkdir -p ~/.buildozer/cache
+          mkdir -p ~/.buildozer/cache/freetype
+          # Download freetype from GNU reliable CDN mirror
+          curl -sSL "https://ftpmirror.gnu.org/freetype/freetype-2.14.1.tar.gz" -o ~/.buildozer/cache/freetype-2.14.1.tar.gz
+          cp ~/.buildozer/cache/freetype-2.14.1.tar.gz ~/.buildozer/cache/freetype/
+
       - name: Build APK with Buildozer
         run: |
           # Automatically accept SDK licenses and build debug APK
