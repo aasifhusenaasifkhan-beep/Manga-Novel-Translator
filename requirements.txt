@@ -1,0 +1,5 @@
+kivy
+opencv-python-headless
+pillow
+numpy
+PyMuPDF
