@@ -32,10 +32,11 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.33
 
-      - name: Pre-install Android SDK Build-Tools & AIDL
+      - name: Setup Android SDK Tools Link
         run: |
-          mkdir -p ~/.buildozer/android/platform/android-sdk
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
+          mkdir -p ~/.buildozer/android/platform/android-sdk/tools
+          cp -r $ANDROID_HOME/cmdline-tools/latest/* ~/.buildozer/android/platform/android-sdk/tools/
+          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
 
       - name: Build APK with Buildozer
         run: |
