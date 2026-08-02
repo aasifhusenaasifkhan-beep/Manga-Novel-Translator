@@ -7,17 +7,39 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Build APK with Docker Buildozer
-        uses: ArtemSzymag/buildozer-action@v1.2
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
         with:
-          command: buildozer -v android debug
-          buildozer_version: master
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ccache git libffi-dev libssl-dev python3-dev build-essential \
+            libltdl-dev libstdc++6 zlib1g zip unzip openjdk-17-jdk autoconf libtool pkg-config
+          pip install --upgrade pip
+          pip install buildozer cython==0.29.33
+
+      - name: Pre-install Android SDK Build-Tools & AIDL
+        run: |
+          mkdir -p ~/.buildozer/android/platform/android-sdk
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
+
+      - name: Build APK with Buildozer
+        run: |
+          buildozer -v android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
