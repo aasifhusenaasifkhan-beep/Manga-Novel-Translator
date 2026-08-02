@@ -47,7 +47,7 @@ def convert_to_images(input_path, output_folder="workspace/temp_pages"):
                     img.save(os.path.join(output_folder, f"{count:04d}.png"))
                     count += 1
                 except Exception as e:
-                    print(f"Skipping corrupt PDF image: {e}")
+                    print(f"Skipping PDF image error: {e}")
     elif ext == ".zip":
         temp_extracted = "workspace/temp_extracted"
         clean_dir(temp_extracted)
@@ -63,7 +63,7 @@ def convert_to_images(input_path, output_folder="workspace/temp_pages"):
                     img = Image.open(io.BytesIO(data)).convert("RGB")
                     img.save(os.path.join(output_folder, f"{idx+1:04d}.png"))
                 except Exception as e:
-                    print(f"Skipping ZIP image {name}: {e}")
+                    print(f"Skipping ZIP image error {name}: {e}")
         shutil.rmtree(temp_extracted, ignore_errors=True)
     elif ext in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
         img = Image.open(input_path).convert("RGB")
@@ -194,7 +194,7 @@ def run_phase2(translated_txt_path, work_dir="workspace"):
     clean_dir(final_dir)
 
     if not os.path.exists(map_json):
-        raise FileNotFoundError("Map file translation_map.json missing. Run Phase 1 first.")
+        raise FileNotFoundError("Map file missing.")
 
     translations = {}
     with open(translated_txt_path, 'r', encoding='utf-8') as f:
@@ -202,9 +202,6 @@ def run_phase2(translated_txt_path, work_dir="workspace"):
             line_str = line.strip()
             if '=Dialogues=' in line_str:
                 bid, text = line_str.split('=Dialogues=', 1)
-                translations[bid.strip()] = text.strip()
-            elif '=Dilouges=' in line_str:
-                bid, text = line_str.split('=Dilouges=', 1)
                 translations[bid.strip()] = text.strip()
 
     with open(map_json, 'r', encoding='utf-8') as f:
@@ -231,7 +228,7 @@ def run_phase2(translated_txt_path, work_dir="workspace"):
 def create_final_zip(work_dir="workspace"):
     final_dir = os.path.join(work_dir, "final_pages")
     if not os.path.exists(final_dir) or not os.listdir(final_dir):
-        raise FileNotFoundError("No rendered pages found. Complete Phase 2 first.")
+        raise FileNotFoundError("No rendered pages found.")
 
     download_dir = get_download_dir()
     zip_path = os.path.join(download_dir, "Final_Manga_Translated.zip")
