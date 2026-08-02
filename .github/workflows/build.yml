@@ -1,4 +1,4 @@
-name: Build Android APK (Savannah Patch)
+name: Build Android APK (Fast & Stable)
 
 on:
   push:
@@ -53,16 +53,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install "setuptools<69.0.0" "cython==0.29.36" "buildozer==1.5.0" "virtualenv==20.25.0"
 
-      - name: Pre-clone p4a & Patch Broken Savannah URLs to GNU Mirror
+      - name: Pre-clone Stable p4a Release & Patch Recipe Mirror
         run: |
-          # 1. Create buildozer platform folder
           mkdir -p ~/.buildozer/android/platform
 
-          # 2. Clone python-for-android
-          git clone --depth 1 https://github.com/kivy/python-for-android.git ~/.buildozer/android/platform/python-for-android
+          # Stable p4a Tag (Python 3.11)
+          git clone --depth 1 --branch v2024.01.21 https://github.com/kivy/python-for-android.git ~/.buildozer/android/platform/python-for-android
 
-          # 3. Patch p4a recipes to replace dead savannah.gnu.org with ftpmirror.gnu.org
-          sed -i 's|download.savannah.gnu.org|ftpmirror.gnu.org|g' ~/.buildozer/android/platform/python-for-android/pythonforandroid/recipes/freetype/__init__.py
+          # Patch recipe URLs
+          sed -i 's|download.savannah.gnu.org|ftpmirror.gnu.org|g' ~/.buildozer/android/platform/python-for-android/pythonforandroid/recipes/freetype/__init__.py || true
           sed -i 's|download.savannah.gnu.org|ftpmirror.gnu.org|g' ~/.buildozer/android/platform/python-for-android/pythonforandroid/recipes/*/__init__.py || true
 
       - name: Build APK with Buildozer
