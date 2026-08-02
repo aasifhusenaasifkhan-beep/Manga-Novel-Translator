@@ -1,5 +1,9 @@
 import os
+import sys
+import threading
+
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.uix.screenmanager import ScreenManager, Screen, SlideTransition
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -20,7 +24,7 @@ from translator_engine import (
 
 Window.clearcolor = (0.07, 0.07, 0.09, 1)
 
-# ---------- Storage root (works for real Android device) ----------
+# ---------- Safe Storage Root Detection ----------
 if os.path.exists("/storage/emulated/0"):
     STORAGE_ROOT = "/storage/emulated/0"
 elif os.path.exists("/sdcard"):
@@ -28,32 +32,39 @@ elif os.path.exists("/sdcard"):
 else:
     STORAGE_ROOT = os.path.expanduser("~")
 
-WORK_DIR = "workspace"
 
-# ---------- Try requesting Android runtime storage permission ----------
+def get_writable_work_dir():
+    """Gets a guaranteed writable working directory on Android or Desktop."""
+    try:
+        app = App.get_running_app()
+        if app and app.user_data_dir:
+            wdir = os.path.join(app.user_data_dir, "workspace")
+            os.makedirs(wdir, exist_ok=True)
+            return wdir
+    except Exception:
+        pass
+    wdir = os.path.join(os.getcwd(), "workspace")
+    os.makedirs(wdir, exist_ok=True)
+    return wdir
+
+
+# ---------- Safe Android Runtime Permission Requests ----------
 def request_android_permissions():
     try:
         from android.permissions import request_permissions, Permission
 
         def _on_result(permissions, grants):
-            # FIX: previously the result of this dialog was never checked —
-            # if the user tapped "Deny", the app carried on as if storage
-            # access was fine and only failed later with a raw exception.
-            if not all(grants):
-                print("Storage permission denied by user:", permissions, grants)
+            print("Storage permissions result:", permissions, grants)
 
         request_permissions([
             Permission.READ_EXTERNAL_STORAGE,
             Permission.WRITE_EXTERNAL_STORAGE,
         ], _on_result)
-    except Exception:
-        pass  # not running on Android (e.g. desktop testing) — safe to ignore
+    except Exception as e:
+        print("Not on Android or permission request failed:", e)
 
 
 def has_all_files_access():
-    """Android 11+ needs the special 'All files access' permission, separate
-    from the normal READ/WRITE_EXTERNAL_STORAGE dialog. Returns True on
-    desktop (can't check) so testing off-device still works."""
     try:
         from jnius import autoclass
         Environment = autoclass('android.os.Environment')
@@ -63,8 +74,6 @@ def has_all_files_access():
 
 
 def request_all_files_access():
-    """Opens the system settings screen where the user manually flips on
-    'All files access' for this app (Android won't let apps auto-grant this)."""
     try:
         from jnius import autoclass
         Intent = autoclass('android.content.Intent')
@@ -79,7 +88,6 @@ def request_all_files_access():
         print("Could not open All Files Access settings:", e)
 
 
-# Case-insensitive extension helper (Android file filters are case-sensitive by default)
 def ext_filters(*exts):
     patterns = []
     for e in exts:
@@ -99,7 +107,7 @@ def make_button(text, color, callback=None, height=50):
 
 
 # ============================================================
-#  Reusable File Picker Popup
+#  File Picker Popup (Fault Tolerant)
 # ============================================================
 class FilePickerPopup(Popup):
     def __init__(self, on_select, filters=None, **kwargs):
@@ -110,10 +118,6 @@ class FilePickerPopup(Popup):
 
         layout = BoxLayout(orientation='vertical', spacing=8, padding=8)
 
-        # FIX: if storage access isn't actually granted yet (or was revoked),
-        # pointing FileChooserListView at STORAGE_ROOT used to raise/hang with
-        # no message — the popup just looked broken. Fall back to a folder we
-        # can always read so the user sees something instead of a dead popup.
         try:
             os.listdir(STORAGE_ROOT)
             chooser_path = STORAGE_ROOT
@@ -155,14 +159,13 @@ class FilePickerPopup(Popup):
 
 
 # ============================================================
-#  Home Screen — choose Old (Auto) or Manual mode
+#  Home Screen
 # ============================================================
 class HomeScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
         self.add_widget(self.layout)
-        self.rebuild()
 
     def on_pre_enter(self):
         self.rebuild()
@@ -209,7 +212,7 @@ class HomeScreen(Screen):
         )
         self.layout.add_widget(btn_old)
         self.layout.add_widget(btn_manual)
-        self.layout.add_widget(Label())  # spacer
+        self.layout.add_widget(Label())
 
     def grant_access(self, instance):
         request_all_files_access()
@@ -220,7 +223,7 @@ class HomeScreen(Screen):
 
 
 # ============================================================
-#  Old Mode Screen (Automatic pipeline) — file picker fixed
+#  Old Mode Screen (Async Threaded Engine Integration)
 # ============================================================
 class OldModeScreen(Screen):
     def __init__(self, **kwargs):
@@ -235,7 +238,6 @@ class OldModeScreen(Screen):
         layout = BoxLayout(orientation='vertical', padding=15, spacing=12, size_hint_y=None)
         layout.bind(minimum_height=layout.setter('height'))
 
-        # Step 1: pick source file
         layout.add_widget(Label(
             text="Step 1: Manga file (PDF/ZIP/JPG) select karein",
             font_size='14sp', size_hint_y=None, height=dp(25), color=(0.8, 0.8, 0.8, 1)
@@ -249,20 +251,18 @@ class OldModeScreen(Screen):
             "Browse File", (0.2, 0.4, 0.7, 1), self.open_file_picker
         ))
 
-        btn_phase1 = make_button(
+        self.btn_phase1 = make_button(
             "Step 2: Extract Text & Clean Pages", (0.4, 0.2, 0.8, 1),
             self.process_phase1
         )
-        layout.add_widget(btn_phase1)
+        layout.add_widget(self.btn_phase1)
 
         self.status1 = Label(
             text="Status: Ready", font_size='12sp', size_hint_y=None, height=dp(60),
             color=(0.6, 0.6, 0.6, 1)
         )
-        self.status1.text_size = (Window.width - 40, None)
         layout.add_widget(self.status1)
 
-        # Step 3: translated txt
         layout.add_widget(Label(
             text="Step 3: Translated TXT file select karein",
             font_size='14sp', size_hint_y=None, height=dp(25), color=(0.8, 0.8, 0.8, 1)
@@ -276,17 +276,17 @@ class OldModeScreen(Screen):
             "Browse TXT", (0.2, 0.4, 0.7, 1), self.open_txt_picker
         ))
 
-        btn_phase2 = make_button(
+        self.btn_phase2 = make_button(
             "Step 4: Render Translated Pages", (0.1, 0.6, 0.4, 1),
             self.process_phase2
         )
-        layout.add_widget(btn_phase2)
+        layout.add_widget(self.btn_phase2)
 
-        btn_export = make_button(
+        self.btn_export = make_button(
             "Step 5: Export Final ZIP", (0.8, 0.4, 0.1, 1),
             self.process_export
         )
-        layout.add_widget(btn_export)
+        layout.add_widget(self.btn_export)
 
         scroll.add_widget(layout)
         outer.add_widget(scroll)
@@ -323,57 +323,79 @@ class OldModeScreen(Screen):
         self.selected_txt = path
         self.txt_label.text = f"Selected: {os.path.basename(path)}"
 
+    def update_status(self, text):
+        Clock.schedule_once(lambda dt: setattr(self.status1, 'text', text), 0)
+
+    # --- Threaded Phase 1 ---
     def process_phase1(self, instance):
         if not self.selected_file or not os.path.exists(self.selected_file):
-            self.status1.text = "Pehle ek file select karein (Browse File button)"
+            self.status1.text = "Pehle ek file select karein"
             return
-        # FIX: run_phase1 writes to /sdcard/Download — if "All files access"
-        # was revoked after the home screen check, this used to fail with a
-        # raw PermissionError. Now we catch that specific case with a clear message.
-        if not has_all_files_access():
-            self.status1.text = "Storage access nahi hai. Home screen par ja kar 'Grant Storage Access' allow karein."
-            return
-        self.status1.text = "Processing... Wait karein!"
-        try:
-            txt_path = run_phase1(self.selected_file)
-            self.status1.text = f"Phase 1 Done! TXT saved:\n{txt_path}"
-        except PermissionError:
-            self.status1.text = "Permission Error: Storage access allow karein aur dobara try karein."
-        except Exception as e:
-            self.status1.text = f"Error: {str(e)}"
 
+        self.status1.text = "Processing in background... Please wait!"
+        self.btn_phase1.disabled = True
+
+        def _worker():
+            try:
+                wdir = get_writable_work_dir()
+                txt_path = run_phase1(self.selected_file, work_dir=wdir)
+                self.update_status(f"Phase 1 Done!\nTXT Saved: {txt_path}")
+            except Exception as e:
+                self.update_status(f"Phase 1 Error: {str(e)}")
+            finally:
+                Clock.schedule_once(lambda dt: setattr(self.btn_phase1, 'disabled', False), 0)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # --- Threaded Phase 2 ---
     def process_phase2(self, instance):
         if not self.selected_txt or not os.path.exists(self.selected_txt):
             self.status1.text = "Pehle translated TXT select karein"
             return
-        self.status1.text = "Rendering pages... Wait karein!"
-        try:
-            result = run_phase2(self.selected_txt)
-            # FIX: run_phase2 can return the string "JSON Map Missing" instead
-            # of raising — previously this was shown as if it were a success.
-            if result == "JSON Map Missing":
-                self.status1.text = "Error: Pehle Step 2 (Extract Text) complete karein — translation map missing hai."
-            else:
-                self.status1.text = "Manga rendered successfully!"
-        except Exception as e:
-            self.status1.text = f"Error: {str(e)}"
 
+        self.status1.text = "Rendering pages... Wait karein!"
+        self.btn_phase2.disabled = True
+
+        def _worker():
+            try:
+                wdir = get_writable_work_dir()
+                res = run_phase2(self.selected_txt, work_dir=wdir)
+                if res == "JSON Map Missing":
+                    self.update_status("Error: Step 2 Complete karein pehle (Map Missing)")
+                else:
+                    self.update_status("Manga Rendered Successfully!")
+            except Exception as e:
+                self.update_status(f"Phase 2 Error: {str(e)}")
+            finally:
+                Clock.schedule_once(lambda dt: setattr(self.btn_phase2, 'disabled', False), 0)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # --- Threaded Export ---
     def process_export(self, instance):
-        # FIX: previously this would silently write an empty zip if Step 4
-        # hadn't produced any pages yet, and tell the user it "succeeded".
-        final_dir = os.path.join("workspace", "final_pages")
+        wdir = get_writable_work_dir()
+        final_dir = os.path.join(wdir, "final_pages")
         if not os.path.isdir(final_dir) or not os.listdir(final_dir):
-            self.status1.text = "Koi rendered page nahi mili. Pehle Step 4 (Render Translated Pages) complete karein."
+            self.status1.text = "Koi rendered page nahi mila. Pehle Step 4 poora karein."
             return
-        try:
-            zip_path = create_final_zip()
-            self.status1.text = f"Exported to:\n{zip_path}"
-        except Exception as e:
-            self.status1.text = f"Export Error: {str(e)}"
+
+        self.status1.text = "Creating ZIP..."
+        self.btn_export.disabled = True
+
+        def _worker():
+            try:
+                zip_path = create_final_zip(work_dir=wdir)
+                self.update_status(f"Exported to:\n{zip_path}")
+            except Exception as e:
+                self.update_status(f"Export Error: {str(e)}")
+            finally:
+                Clock.schedule_once(lambda dt: setattr(self.btn_export, 'disabled', False), 0)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 # ============================================================
-#  Manual Mode Screen — format pick, file pick, page gallery
+#  Manual Mode Screen
 # ============================================================
 class ManualModeScreen(Screen):
     def __init__(self, **kwargs):
@@ -405,7 +427,6 @@ class ManualModeScreen(Screen):
     def clear_body(self):
         self.body.clear_widgets()
 
-    # ---------- Step A: format select ----------
     def show_format_step(self):
         self.clear_body()
         self.body.add_widget(Label(
@@ -420,7 +441,7 @@ class ManualModeScreen(Screen):
         row.add_widget(make_button("JPG/PNG", (0.1, 0.6, 0.4, 1),
                                     lambda x: self.open_picker(ext_filters('jpg', 'jpeg', 'png'))))
         self.body.add_widget(row)
-        self.body.add_widget(Label())  # spacer
+        self.body.add_widget(Label())
 
     def open_picker(self, filters):
         popup = FilePickerPopup(on_select=self.on_file_selected, filters=filters)
@@ -430,35 +451,35 @@ class ManualModeScreen(Screen):
         self.selected_file = path
         self.show_loading_step()
 
-    # ---------- Step B: converting ----------
     def show_loading_step(self):
         self.clear_body()
         self.body.add_widget(Label(
             text=f"Converting to pages...\n{os.path.basename(self.selected_file)}",
             font_size='14sp', color=(0.8, 0.8, 0.8, 1)
         ))
-        from kivy.clock import Clock
-        Clock.schedule_once(lambda dt: self.do_convert(), 0.3)
 
-    def do_convert(self):
-        try:
-            convert_to_images(self.selected_file, os.path.join(WORK_DIR, "temp_pages"))
-            self.pages = get_page_paths(os.path.join(WORK_DIR, "temp_pages"))
-            self.show_gallery_step()
-        except Exception as e:
-            self.clear_body()
-            self.body.add_widget(Label(text=f"Error: {str(e)}", color=(1, 0.4, 0.4, 1)))
-            self.body.add_widget(make_button("Try Again", (0.4, 0.2, 0.8, 1),
-                                              lambda x: self.show_format_step()))
+        def _worker():
+            try:
+                wdir = get_writable_work_dir()
+                temp_pages = os.path.join(wdir, "temp_pages")
+                convert_to_images(self.selected_file, temp_pages)
+                self.pages = get_page_paths(temp_pages)
+                Clock.schedule_once(lambda dt: self.show_gallery_step(), 0)
+            except Exception as e:
+                Clock.schedule_once(lambda dt, err=str(e): self.show_error(err), 0)
 
-    # ---------- Step C: page gallery ----------
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def show_error(self, err_msg):
+        self.clear_body()
+        self.body.add_widget(Label(text=f"Error: {err_msg}", color=(1, 0.4, 0.4, 1)))
+        self.body.add_widget(make_button("Try Again", (0.4, 0.2, 0.8, 1),
+                                          lambda x: self.show_format_step()))
+
     def show_gallery_step(self):
         self.clear_body()
         if not self.pages:
-            self.body.add_widget(Label(text="Koi pages nahi mile is file mein",
-                                        color=(1, 0.4, 0.4, 1)))
-            self.body.add_widget(make_button("Try Again", (0.4, 0.2, 0.8, 1),
-                                              lambda x: self.show_format_step()))
+            self.show_error("Koi pages nahi mile is file mein")
             return
 
         self.body.add_widget(Label(
@@ -486,16 +507,11 @@ class ManualModeScreen(Screen):
         scroll.add_widget(grid)
         self.body.add_widget(scroll)
 
-    # ---------- Step D: full-screen viewer ----------
     def open_viewer(self, page_path):
         popup = Popup(title=os.path.basename(page_path), size_hint=(0.98, 0.98))
         layout = BoxLayout(orientation='vertical')
         img = KivyImage(source=page_path, allow_stretch=True)
         layout.add_widget(img)
-        layout.add_widget(Label(
-            text="Bubble color-pick / tap-to-mark tools agle update mein aayenge",
-            size_hint_y=None, height=dp(30), font_size='11sp', color=(0.6, 0.6, 0.6, 1)
-        ))
         close_btn = make_button("Close", (0.6, 0.2, 0.2, 1), lambda x: popup.dismiss())
         layout.add_widget(close_btn)
         popup.content = layout
@@ -503,7 +519,7 @@ class ManualModeScreen(Screen):
 
 
 # ============================================================
-#  App
+#  Main App
 # ============================================================
 class MangaApp(App):
     def build(self):
