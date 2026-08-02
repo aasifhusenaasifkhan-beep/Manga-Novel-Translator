@@ -1,16 +1,19 @@
-import os, json, cv2, numpy as np, zipfile, fitz
+import os, json, zipfile, io
 from PIL import Image, ImageDraw, ImageFont
+import pypdf
 
 def convert_to_images(input_path, output_folder="temp_pages"):
     os.makedirs(output_folder, exist_ok=True)
     ext = os.path.splitext(input_path)[1].lower()
+
     if ext == ".pdf":
-        doc = fitz.open(input_path)
-        for i, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=200)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img.save(f"{output_folder}/{i+1:04d}.png")
-        doc.close()
+        reader = pypdf.PdfReader(input_path)
+        count = 1
+        for page in reader.pages:
+            for img_file in page.images:
+                img = Image.open(io.BytesIO(img_file.data)).convert("RGB")
+                img.save(f"{output_folder}/{count:04d}.png")
+                count += 1
     elif ext == ".zip":
         with zipfile.ZipFile(input_path, 'r') as z:
             images = sorted([f for f in z.namelist() if f.lower().endswith(('.png','.jpg','.jpeg','.bmp'))])
@@ -19,22 +22,14 @@ def convert_to_images(input_path, output_folder="temp_pages"):
                 Image.open(os.path.join("temp_extracted", name)).convert("RGB").save(f"{output_folder}/{idx+1:04d}.png")
     elif ext in (".jpg",".jpeg",".png"):
         Image.open(input_path).convert("RGB").save(f"{output_folder}/0001.png")
+
     return sorted(os.listdir(output_folder))
 
-def detect_bubbles(image_path):
-    img = cv2.imread(image_path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    bubbles = []
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        area = cv2.contourArea(cnt)
-        if 1000 < area < 800000 and 0.2 < w/h < 5:
-            x1, y1 = max(0, x-5), max(0, y-5)
-            x2, y2 = min(img.shape[1], x+w+5), min(img.shape[0], y+h+5)
-            bubbles.append({'bbox': (x1,y1,x2,y2), 'contour': cnt})
-    return bubbles
+def detect_bubbles_pil(image_path):
+    img = Image.open(image_path).convert('RGB')
+    w, h = img.size
+    margin = 20
+    return [{'bbox': (margin, margin, w - margin, h - margin), 'contour': [[margin, margin], [w-margin, margin], [w-margin, h-margin], [margin, h-margin]]}]
 
 def run_phase1(input_file, work_dir="workspace"):
     temp_pages = os.path.join(work_dir, "temp_pages")
@@ -49,18 +44,20 @@ def run_phase1(input_file, work_dir="workspace"):
 
     for page_file in pages:
         page_path = os.path.join(temp_pages, page_file)
-        bubbles = detect_bubbles(page_path)
+        bubbles = detect_bubbles_pil(page_path)
         bubble_data = []
 
-        img = cv2.imread(page_path)
+        img = Image.open(page_path).convert("RGB")
+        draw = ImageDraw.Draw(img)
+
         for idx, b in enumerate(bubbles):
             bbox = b['bbox']
             contour = b['contour']
             bid = f"{page_file.replace('.png','')}_{idx+1}"
 
-            orig_text = "[Text Detected]"  # Placeholder for native mobile OCR
+            orig_text = "[Dialogue Text Here]"
             bubble_info = {
-                'id': bid, 'bbox': bbox, 'contour_points': contour.tolist(),
+                'id': bid, 'bbox': bbox, 'contour_points': contour,
                 'original_text': orig_text, 'colour': (0,0,0)
             }
             bubble_data.append(bubble_info)
@@ -69,17 +66,15 @@ def run_phase1(input_file, work_dir="workspace"):
             txt_lines.append("Font=default")
             txt_lines.append("Colour=(0,0,0)")
 
-            # Inpaint / Clean text box area
-            x1, y1, x2, y2 = bbox
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), -1)
+            draw.rectangle(bbox, fill=(255, 255, 255))
 
         full_map[page_file] = bubble_data
         clean_path = os.path.join(clean_pages, page_file)
-        cv2.imwrite(clean_path, img)
+        img.save(clean_path)
 
     json_path = os.path.join(output_dir, "translation_map.json")
     txt_path = os.path.join(output_dir, "translate_me.txt")
-    
+
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(full_map, f, indent=2)
     with open(txt_path, "w", encoding="utf-8") as f:
