@@ -48,21 +48,31 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython
 
-      # Step 1: Symlink the pre-installed system NDK to prevent NDK download timeout/502 errors
-      - name: Symlink Pre-installed Android NDK
+      # Clears corrupted cached archives and conditionally symlinks the NDK
+      - name: Configure Android NDK Workspace
         run: |
           mkdir -p ~/.buildozer/android/platform
+          
+          # Delete any cached corrupted zip files to guarantee clean extraction fallback
+          rm -f ~/.buildozer/android/platform/android-ndk-r25b-linux.zip
           rm -rf ~/.buildozer/android/platform/android-ndk-r25b
-          ln -sfn /usr/local/lib/android/sdk/ndk/25.2.9519653 ~/.buildozer/android/platform/android-ndk-r25b
+          
+          # Use local system NDK if available on the runner, otherwise fall back cleanly
+          if [ -d "/usr/local/lib/android/sdk/ndk/25.2.9519653" ]; then
+            echo "Pre-installed NDK 25b detected. Symlinking..."
+            ln -sfn /usr/local/lib/android/sdk/ndk/25.2.9519653 ~/.buildozer/android/platform/android-ndk-r25b
+          else
+            echo "Pre-installed NDK 25b not found on this image. Buildozer will execute a fresh download."
+          fi
 
-      # Step 2: Establish SDK Tools and populate the expected tools/bin layout
+      # Re-establish SDK Tools layout
       - name: Setup Android SDK Tools Link
         run: |
           mkdir -p ~/.buildozer/android/platform/android-sdk/tools
           cp -r $ANDROID_HOME/cmdline-tools/latest/* ~/.buildozer/android/platform/android-sdk/tools/
           yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
 
-      # Step 3: Write license parameters locally
+      # Pre-seed Android Licenses
       - name: Pre-accept Android SDK Licenses
         run: |
           mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
