@@ -1,4 +1,4 @@
-name: Build Android APK (Rock Solid Toolchain)
+name: Build Android APK (Savannah Patch)
 
 on:
   push:
@@ -53,23 +53,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install "setuptools<69.0.0" "cython==0.29.36" "buildozer==1.5.0" "virtualenv==20.25.0"
 
-      - name: Pre-inject All C-Library Recipes (Prevent 502/403 Download Errors)
+      - name: Pre-clone p4a & Patch Broken Savannah URLs to GNU Mirror
         run: |
-          # Create all target package directories for python-for-android
-          mkdir -p ~/.buildozer/android/packages/freetype
-          mkdir -p ~/.buildozer/android/packages/jpeg
-          mkdir -p ~/.buildozer/android/packages/png
-          mkdir -p ~/.buildozer/cache
+          # 1. Create buildozer platform folder
+          mkdir -p ~/.buildozer/android/platform
 
-          # 1. Inject Freetype
-          curl -fL "https://downloads.sourceforge.net/project/freetype/freetype2/2.14.1/freetype-2.14.1.tar.gz" -o ~/.buildozer/android/packages/freetype/freetype-2.14.1.tar.gz || true
-          cp ~/.buildozer/android/packages/freetype/freetype-2.14.1.tar.gz ~/.buildozer/cache/ 2>/dev/null || true
+          # 2. Clone python-for-android
+          git clone --depth 1 https://github.com/kivy/python-for-android.git ~/.buildozer/android/platform/python-for-android
 
-          # 2. Inject LibJPEG
-          curl -fL "https://www.ijg.org/files/jpegsrc.v9e.tar.gz" -o ~/.buildozer/android/packages/jpeg/jpegsrc.v9e.tar.gz || true
-
-          # 3. Inject LibPNG
-          curl -fL "https://downloads.sourceforge.net/project/libpng/libpng16/1.6.43/libpng-1.6.43.tar.gz" -o ~/.buildozer/android/packages/png/libpng-1.6.43.tar.gz || true
+          # 3. Patch p4a recipes to replace dead savannah.gnu.org with ftpmirror.gnu.org
+          sed -i 's|download.savannah.gnu.org|ftpmirror.gnu.org|g' ~/.buildozer/android/platform/python-for-android/pythonforandroid/recipes/freetype/__init__.py
+          sed -i 's|download.savannah.gnu.org|ftpmirror.gnu.org|g' ~/.buildozer/android/platform/python-for-android/pythonforandroid/recipes/*/__init__.py || true
 
       - name: Build APK with Buildozer
         run: |
