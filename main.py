@@ -42,6 +42,44 @@ def request_android_permissions():
         pass  # not running on Android (e.g. desktop testing) — safe to ignore
 
 
+def has_all_files_access():
+    """Android 11+ needs the special 'All files access' permission, separate
+    from the normal READ/WRITE_EXTERNAL_STORAGE dialog. Returns True on
+    desktop (can't check) so testing off-device still works."""
+    try:
+        from jnius import autoclass
+        Environment = autoclass('android.os.Environment')
+        return bool(Environment.isExternalStorageManager())
+    except Exception:
+        return True
+
+
+def request_all_files_access():
+    """Opens the system settings screen where the user manually flips on
+    'All files access' for this app (Android won't let apps auto-grant this)."""
+    try:
+        from jnius import autoclass
+        Intent = autoclass('android.content.Intent')
+        Settings = autoclass('android.provider.Settings')
+        Uri = autoclass('android.net.Uri')
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        activity = PythonActivity.mActivity
+        intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+        intent.setData(Uri.parse("package:" + activity.getPackageName()))
+        activity.startActivity(intent)
+    except Exception as e:
+        print("Could not open All Files Access settings:", e)
+
+
+# Case-insensitive extension helper (Android file filters are case-sensitive by default)
+def ext_filters(*exts):
+    patterns = []
+    for e in exts:
+        patterns.append(f"*.{e.lower()}")
+        patterns.append(f"*.{e.upper()}")
+    return patterns
+
+
 def make_button(text, color, callback=None, height=50):
     btn = Button(
         text=text, size_hint_y=None, height=dp(height),
@@ -66,7 +104,7 @@ class FilePickerPopup(Popup):
 
         self.chooser = FileChooserListView(
             path=STORAGE_ROOT,
-            filters=filters or ['*.pdf', '*.zip', '*.jpg', '*.jpeg', '*.png'],
+            filters=filters or ext_filters('pdf', 'zip', 'jpg', 'jpeg', 'png'),
             dirselect=False,
         )
         layout.add_widget(self.chooser)
@@ -104,15 +142,41 @@ class FilePickerPopup(Popup):
 class HomeScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
+        self.layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
+        self.add_widget(self.layout)
+        self.rebuild()
+
+    def on_pre_enter(self):
+        self.rebuild()
+
+    def rebuild(self):
+        self.layout.clear_widgets()
 
         title = Label(
             text="[b]Manga & Novel Offline Subber Pro[/b]",
             markup=True, font_size='22sp', size_hint_y=None, height=dp(50),
             color=(0.7, 0.5, 1, 1)
         )
-        layout.add_widget(title)
-        layout.add_widget(Label(
+        self.layout.add_widget(title)
+
+        if not has_all_files_access():
+            self.layout.add_widget(Label(
+                text="Files dikhne ke liye Storage Access allow karein:",
+                font_size='13sp', size_hint_y=None, height=dp(40),
+                color=(1, 0.6, 0.4, 1)
+            ))
+            self.layout.add_widget(make_button(
+                "Grant Storage Access", (0.8, 0.4, 0.1, 1),
+                self.grant_access, height=55
+            ))
+            self.layout.add_widget(Label(
+                text="Allow karne ke baad is screen par wapas aayein",
+                font_size='11sp', size_hint_y=None, height=dp(25),
+                color=(0.6, 0.6, 0.6, 1)
+            ))
+            return
+
+        self.layout.add_widget(Label(
             text="Ek mode choose karein:", font_size='14sp',
             size_hint_y=None, height=dp(30), color=(0.8, 0.8, 0.8, 1)
         ))
@@ -125,11 +189,12 @@ class HomeScreen(Screen):
             "Manual Mode (Bubble Select)", (0.1, 0.6, 0.4, 1),
             lambda x: self.goto('manual_mode'), height=60
         )
-        layout.add_widget(btn_old)
-        layout.add_widget(btn_manual)
-        layout.add_widget(Label())  # spacer
+        self.layout.add_widget(btn_old)
+        self.layout.add_widget(btn_manual)
+        self.layout.add_widget(Label())  # spacer
 
-        self.add_widget(layout)
+    def grant_access(self, instance):
+        request_all_files_access()
 
     def goto(self, screen_name):
         self.manager.transition = SlideTransition(direction='left')
@@ -224,7 +289,7 @@ class OldModeScreen(Screen):
     def open_file_picker(self, instance):
         popup = FilePickerPopup(
             on_select=self.set_selected_file,
-            filters=['*.pdf', '*.zip', '*.jpg', '*.jpeg', '*.png']
+            filters=ext_filters('pdf', 'zip', 'jpg', 'jpeg', 'png')
         )
         popup.open()
 
@@ -233,7 +298,7 @@ class OldModeScreen(Screen):
         self.file_label.text = f"Selected: {os.path.basename(path)}"
 
     def open_txt_picker(self, instance):
-        popup = FilePickerPopup(on_select=self.set_selected_txt, filters=['*.txt'])
+        popup = FilePickerPopup(on_select=self.set_selected_txt, filters=ext_filters('txt'))
         popup.open()
 
     def set_selected_txt(self, path):
@@ -312,11 +377,11 @@ class ManualModeScreen(Screen):
         ))
         row = BoxLayout(size_hint_y=None, height=dp(60), spacing=10)
         row.add_widget(make_button("PDF", (0.4, 0.2, 0.8, 1),
-                                    lambda x: self.open_picker(['*.pdf'])))
+                                    lambda x: self.open_picker(ext_filters('pdf'))))
         row.add_widget(make_button("ZIP", (0.2, 0.5, 0.7, 1),
-                                    lambda x: self.open_picker(['*.zip'])))
+                                    lambda x: self.open_picker(ext_filters('zip'))))
         row.add_widget(make_button("JPG/PNG", (0.1, 0.6, 0.4, 1),
-                                    lambda x: self.open_picker(['*.jpg', '*.jpeg', '*.png'])))
+                                    lambda x: self.open_picker(ext_filters('jpg', 'jpeg', 'png'))))
         self.body.add_widget(row)
         self.body.add_widget(Label())  # spacer
 
