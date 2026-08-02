@@ -25,6 +25,17 @@ def convert_to_images(input_path, output_folder="workspace/temp_pages"):
 
     return sorted(os.listdir(output_folder))
 
+
+def get_page_paths(pages_folder="workspace/temp_pages"):
+    """Return sorted full file paths of converted page images (used by Manual Mode gallery)."""
+    if not os.path.exists(pages_folder):
+        return []
+    files = sorted([
+        f for f in os.listdir(pages_folder)
+        if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+    ])
+    return [os.path.join(pages_folder, f) for f in files]
+
 def detect_bubbles_pil(image_path):
     img = Image.open(image_path).convert('RGB')
     w, h = img.size
