@@ -33,21 +33,17 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython==0.29.33
 
-      - name: Fix Android SDK Licenses and Build-Tools
+      - name: Setup Android SDK Tools Link (Original Working Step)
         run: |
-          # 1. Buildozer SDK directory structure create karein
-          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
-          
-          # 2. Android SDK ke saare licenses accept karein
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses || true
-          
-          # 3. Android Build-Tools 33.0.2 aur Platform 33 force-install karein
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME "build-tools;33.0.2" "platforms;android-33" "platform-tools" || true
-          
-          # 4. Accepted licenses ko Buildozer ke folder me copy karein
-          cp -r $ANDROID_HOME/licenses/* ~/.buildozer/android/platform/android-sdk/licenses/ 2>/dev/null || true
+          mkdir -p ~/.buildozer/android/platform/android-sdk/tools
+          cp -r $ANDROID_HOME/cmdline-tools/latest/* ~/.buildozer/android/platform/android-sdk/tools/
+          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
 
       - name: Build APK with Buildozer
+        env:
+          ANDROID_NDK_HOME: ""
+          ANDROID_NDK_ROOT: ""
+          ANDROID_NDK: ""
         run: |
           buildozer -v android debug
 
