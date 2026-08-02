@@ -24,27 +24,39 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Cache Buildozer & p4a downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+            .buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-
+
       - name: Install System Dependencies
         run: |
           sudo apt update
           sudo apt install -y ccache git libffi-dev libssl-dev python3-dev build-essential \
-            libltdl-dev libstdc++6 zlib1g zip unzip openjdk-17-jdk autoconf libtool pkg-config
+            libltdl-dev libstdc++6 zlib1g zip unzip openjdk-17-jdk autoconf libtool pkg-config \
+            libjpeg-dev zlib1g-dev
           pip install --upgrade pip
           pip install buildozer cython==0.29.33
 
-      - name: Setup Android SDK Tools Link
+      - name: Build APK with Auto-Retry
         run: |
-          mkdir -p ~/.buildozer/android/platform/android-sdk/tools
-          cp -r $ANDROID_HOME/cmdline-tools/latest/* ~/.buildozer/android/platform/android-sdk/tools/
-          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
-
-      - name: Build APK with Buildozer
-        env:
-          ANDROID_NDK_HOME: ""
-          ANDROID_NDK_ROOT: ""
-          ANDROID_NDK: ""
-        run: |
-          buildozer -v android debug
+          # Accept SDK licenses
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME --licenses || true
+          
+          # Retry up to 3 times if external download returns 502
+          n=0
+          until [ "$n" -ge 3 ]
+          do
+             buildozer -v android debug && break
+             n=$((n+1))
+             echo "Retrying build (Attempt $n) due to network error..."
+             sleep 10
+          done
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
