@@ -30,7 +30,19 @@ else:
     STORAGE_ROOT = os.path.expanduser("~")
 
 WORK_DIR = os.path.join(STORAGE_ROOT, "MangaTranslatorWorkspace")
-os.makedirs(WORK_DIR, exist_ok=True)
+try:
+    os.makedirs(WORK_DIR, exist_ok=True)
+except Exception:
+    # FIX (crash-on-launch): this ran at module import time, before any
+    # permission is granted. On Android 11+, without "All files access"
+    # granted yet (which can't happen until the user taps the button in
+    # the app itself), writing to STORAGE_ROOT raises PermissionError —
+    # and since this was unguarded at the top level, it crashed the app
+    # instantly on every launch, before the UI even appeared.
+    # Fall back to the app's own private folder, which is always writable
+    # without any permission at all.
+    WORK_DIR = os.path.join(os.path.expanduser("~"), "MangaTranslatorWorkspace")
+    os.makedirs(WORK_DIR, exist_ok=True)
 
 
 def request_android_permissions():
