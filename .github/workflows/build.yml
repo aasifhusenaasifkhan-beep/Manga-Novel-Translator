@@ -82,34 +82,36 @@ jobs:
           rm -rf $GITHUB_WORKSPACE/.buildozer/android/platform/dist
           echo "Build storage cleaned"
 
-      # 👇 नया प्री-डाउनलोड स्टेप – तेरे मिरर से freetype
-      - name: Pre-download freetype from working mirror
+      - name: Pre-download freetype from mirror
         run: |
           STORAGE_DIR="$GITHUB_WORKSPACE/.buildozer/android/platform/build-armeabi-v7a_arm64-v8a"
           PACKAGES_DIR="$STORAGE_DIR/packages/freetype"
           mkdir -p "$PACKAGES_DIR"
-
           FREETYPE_FILE="$PACKAGES_DIR/freetype-2.14.1.tar.gz"
           MARKER_FILE="$PACKAGES_DIR/.mark-freetype-2.14.1.tar.gz"
-
           if [ -f "$FREETYPE_FILE" ] && [ -f "$MARKER_FILE" ]; then
             echo "freetype already present, skipping."
           else
             echo "Downloading freetype from mirror..."
-            wget -q --show-progress \
-              --user-agent="Mozilla/5.0" \
+            wget -q --show-progress --user-agent="Mozilla/5.0" \
               -O "$FREETYPE_FILE" \
               "http://download-mirror.savannah.gnu.org/releases/freetype/freetype-2.14.1.tar.gz" \
             && echo "Download successful" || echo "Mirror download failed, will try default"
             touch "$MARKER_FILE"
           fi
-
-          # चेक करें कि फ़ाइल सही जगह आई
           ls -lh "$FREETYPE_FILE" 2>/dev/null || echo "ERROR: freetype file missing!"
         shell: bash
 
       - name: Build APK with Buildozer
-        run: buildozer android debug
+        # लॉग को फ़ाइल में सेव करें ताकि बाद में डाउनलोड कर सकें
+        run: buildozer android debug 2>&1 | tee buildozer.log
+
+      - name: Upload Buildozer Log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: buildozer.log
 
       - name: Upload APK Artifact
         if: success()
