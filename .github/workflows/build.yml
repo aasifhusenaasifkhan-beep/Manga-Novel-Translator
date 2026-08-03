@@ -84,7 +84,7 @@ jobs:
 
       - name: Pre-download freetype from mirror
         run: |
-          STORAGE_DIR="$GITHUB_WORKSPACE/.buildozer/android/platform/build-armeabi-v7a_arm64-v8a"
+          STORAGE_DIR="$GITHUB_WORKSPACE/.buildozer/android/platform/build-arm64-v8a"
           PACKAGES_DIR="$STORAGE_DIR/packages/freetype"
           mkdir -p "$PACKAGES_DIR"
           FREETYPE_FILE="$PACKAGES_DIR/freetype-2.14.1.tar.gz"
@@ -103,7 +103,6 @@ jobs:
         shell: bash
 
       - name: Build APK with Buildozer
-        # लॉग को फ़ाइल में सेव करें ताकि बाद में डाउनलोड कर सकें
         run: buildozer android debug 2>&1 | tee buildozer.log
 
       - name: Upload Buildozer Log (always)
