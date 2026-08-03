@@ -89,17 +89,34 @@ jobs:
           mkdir -p "$PACKAGES_DIR"
           FREETYPE_FILE="$PACKAGES_DIR/freetype-2.14.1.tar.gz"
           MARKER_FILE="$PACKAGES_DIR/.mark-freetype-2.14.1.tar.gz"
-          if [ -f "$FREETYPE_FILE" ] && [ -f "$MARKER_FILE" ]; then
-            echo "freetype already present, skipping."
+
+          # FIX: the marker file used to be touched unconditionally, even
+          # if wget failed or was cut off mid-download. Combined with the
+          # project-local .buildozer cache, that meant a single bad
+          # download got treated as "done" FOREVER — every future run
+          # restored the same corrupt file from cache and skipped
+          # re-downloading it, which is exactly what caused
+          # "tar: This does not look like a tar archive" / "gzip:
+          # unexpected end of file". Now we verify the file is actually a
+          # valid, complete gzip archive before ever writing the marker,
+          # and delete anything bad so it gets retried instead of cached.
+          if [ -f "$FREETYPE_FILE" ] && [ -f "$MARKER_FILE" ] && gzip -t "$FREETYPE_FILE" 2>/dev/null; then
+            echo "freetype already present and verified valid, skipping."
           else
+            rm -f "$MARKER_FILE"
             echo "Downloading freetype from mirror..."
-            wget -q --show-progress --user-agent="Mozilla/5.0" \
-              -O "$FREETYPE_FILE" \
-              "http://download-mirror.savannah.gnu.org/releases/freetype/freetype-2.14.1.tar.gz" \
-            && echo "Download successful" || echo "Mirror download failed, will try default"
-            touch "$MARKER_FILE"
+            if wget -q --show-progress --user-agent="Mozilla/5.0" \
+                 -O "$FREETYPE_FILE" \
+                 "http://download-mirror.savannah.gnu.org/releases/freetype/freetype-2.14.1.tar.gz" \
+               && gzip -t "$FREETYPE_FILE" 2>/dev/null; then
+              echo "Download successful and verified valid."
+              touch "$MARKER_FILE"
+            else
+              echo "Mirror download failed or file was corrupt/incomplete — removing bad file, buildozer's own downloader will retry from the default source."
+              rm -f "$FREETYPE_FILE" "$MARKER_FILE"
+            fi
           fi
-          ls -lh "$FREETYPE_FILE" 2>/dev/null || echo "ERROR: freetype file missing!"
+          ls -lh "$FREETYPE_FILE" 2>/dev/null || echo "No pre-downloaded freetype file — buildozer will download it normally."
         shell: bash
 
       - name: Build APK with Buildozer
