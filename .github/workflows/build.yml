@@ -48,29 +48,34 @@ jobs:
           pip install --upgrade pip
           pip install buildozer cython
 
-      # 👇 ये स्टेप NDK को सिमलिंक करेगा (टाइपो ठीक)
-      - name: Configure Android NDK Workspace
+      - name: Configure Android NDK
         run: |
           mkdir -p ~/.buildozer/android/platform
-          rm -f ~/.buildozer/android/platform/android-ndk-r25b-linux.zip
           rm -rf ~/.buildozer/android/platform/android-ndk-r25b
-          
-          if [ -d "/usr/local/lib/android/sdk/ndk/25.2.9519653" ]; then
-            echo "Pre-installed NDK 25b detected. Symlinking..."
-            ln -sfn /usr/local/lib/android/sdk/ndk/25.2.9519653 ~/.buildozer/android/platform/android-ndk-r25b
+          if [ -d "$ANDROID_SDK_ROOT/ndk/25.2.9519653" ]; then
+            ln -sfn $ANDROID_SDK_ROOT/ndk/25.2.9519653 ~/.buildozer/android/platform/android-ndk-r25b
             touch ~/.buildozer/android/platform/android-ndk-r25b-linux.zip
+            echo "NDK 25b symlinked successfully"
           else
-            echo "Pre-installed NDK 25b not found. Buildozer will download cleanly."
+            echo "NDK not pre-installed, Buildozer will download it"
           fi
 
-      # 👇 SDK के लाइसेंस एक्सेप्ट करने का आसान तरीका
-      - name: Accept Android SDK Licenses
+      - name: Setup Android SDK for Buildozer
         run: |
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+          BUILD_SDK="$HOME/.buildozer/android/platform/android-sdk"
+          mkdir -p "$BUILD_SDK"
+          # रनर में पहले से मौजूद cmdline-tools को Buildozer के SDK फोल्डर में कॉपी करें
+          cp -r "$ANDROID_SDK_ROOT/cmdline-tools" "$BUILD_SDK/"
+          # सारे लाइसेंस एक्सेप्ट करें (हर सवाल पर 'y' भेजेगा)
+          yes | "$BUILD_SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$BUILD_SDK" --licenses
+          # ज़रूरी पैकेज इंस्टॉल करें – बिल्कुल वही जो buildozer.spec में दिया है
+          "$BUILD_SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$BUILD_SDK" \
+            "build-tools;33.0.2" "platforms;android-33" "platform-tools"
+          # Buildozer को बताएँ कि SDK यहाँ है, ताकि वो खुद डाउनलोड न करे
+          echo "ANDROID_SDK_ROOT=$BUILD_SDK" >> "$GITHUB_ENV"
 
       - name: Build APK with Buildozer
-        run: |
-          buildozer -v android debug
+        run: buildozer -v android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
