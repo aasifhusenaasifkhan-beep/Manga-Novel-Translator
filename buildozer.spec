@@ -19,3 +19,6 @@ android.ndk = 25b
 
 android.archs = armeabi-v7a, arm64-v8a
 android.accept_sdk_licenses = True
+
+# 👇 ये लाइन सब ठीक कर देगी – python-for-android की develop ब्रांच इस्तेमाल करेगा
+p4a.branch = develop
