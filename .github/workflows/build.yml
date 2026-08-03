@@ -44,11 +44,11 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ccache git libffi-dev libssl-dev python3-dev build-essential \
-            libltdl-dev libstdc++6 zlib1g zip unzip openjdk-17-jdk autoconf libtool pkg-config
+            libltdl-dev libstdc++6 zlib1g zip unzip autoconf libtool pkg-config
           pip install --upgrade pip
           pip install buildozer cython
 
-      # Step 1: Symlink pre-installed NDK 25b to prevent heavy NDK downloads
+      # 👇 ये स्टेप NDK को सिमलिंक करेगा (टाइपो ठीक)
       - name: Configure Android NDK Workspace
         run: |
           mkdir -p ~/.buildozer/android/platform
@@ -58,21 +58,15 @@ jobs:
           if [ -d "/usr/local/lib/android/sdk/ndk/25.2.9519653" ]; then
             echo "Pre-installed NDK 25b detected. Symlinking..."
             ln -sfn /usr/local/lib/android/sdk/ndk/25.2.9519653 ~/.buildozer/android/platform/android-ndk-r25b
+            touch ~/.buildozer/android/platform/android-ndk-r25b-linux.zip
           else
             echo "Pre-installed NDK 25b not found. Buildozer will download cleanly."
           fi
 
-      # Step 2: Establish default tools structure & accept ALL licenses dynamically
-      - name: Setup Android SDK and Accept Licenses
+      # 👇 SDK के लाइसेंस एक्सेप्ट करने का आसान तरीका
+      - name: Accept Android SDK Licenses
         run: |
-          mkdir -p ~/.buildozer/android/platform/android-sdk/tools
-          cp -r $ANDROID_HOME/cmdline-tools/latest/* ~/.buildozer/android/platform/android-sdk/tools/
-          
-          # Install target platforms
-          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk "build-tools;33.0.2" "platforms;android-33" "platform-tools"
-          
-          # Dynamically accept every license (including SDK terms, preview, and build-tools 37+)
-          yes | ~/.buildozer/android/platform/android-sdk/tools/bin/sdkmanager --sdk_root=$HOME/.buildozer/android/platform/android-sdk --licenses
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
 
       - name: Build APK with Buildozer
         run: |
