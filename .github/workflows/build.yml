@@ -9,6 +9,11 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
+    env:
+      # PyPI के लिए मिरर – तू चाहे तो इसे बदल सकता है (नीचे ऑप्शन दिए हैं)
+      PIP_INDEX_URL: https://pypi.org/simple
+      PIP_TRUSTED_HOST: pypi.org
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -64,26 +69,24 @@ jobs:
         run: |
           BUILD_SDK="$HOME/.buildozer/android/platform/android-sdk"
           mkdir -p "$BUILD_SDK"
-
-          # रनर में पहले से मौजूद cmdline-tools को कॉपी करो
           cp -r "$ANDROID_SDK_ROOT/cmdline-tools" "$BUILD_SDK/"
-
-          # Buildozer को sdkmanager पुरानी जगह (tools/bin) में चाहिए – वहाँ सिमलिंक बनाओ
           mkdir -p "$BUILD_SDK/tools/bin"
           ln -sf "$BUILD_SDK/cmdline-tools/latest/bin/sdkmanager" "$BUILD_SDK/tools/bin/sdkmanager"
-
-          # लाइसेंस एक्सेप्ट करो
           yes | "$BUILD_SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$BUILD_SDK" --licenses
-
-          # ज़रूरी पैकेज इंस्टॉल करो
           "$BUILD_SDK/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$BUILD_SDK" \
             "build-tools;33.0.2" "platforms;android-33" "platform-tools"
-
-          # एनवायरनमेंट वेरिएबल सेट करो ताकि Buildozer इस SDK का इस्तेमाल करे
           echo "ANDROID_SDK_ROOT=$BUILD_SDK" >> "$GITHUB_ENV"
 
+      # 👇 यह स्टेप हर बिल्ड से पहले पिछला अधूरा डाउनलोड साफ करेगा
+      - name: Clean previous build artifacts
+        run: |
+          rm -rf ~/.buildozer/android/platform/build-*
+          rm -rf ~/.buildozer/android/platform/dist
+          echo "Build storage cleaned"
+
       - name: Build APK with Buildozer
-        run: buildozer -v android debug
+        # -v हटा दिया ताकि फालतू लॉग न दिखे और एरर साफ दिखे
+        run: buildozer android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
