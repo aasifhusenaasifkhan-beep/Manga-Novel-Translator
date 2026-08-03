@@ -20,4 +20,8 @@ android.ndk = 25b
 android.archs = arm64-v8a
 
 android.accept_sdk_licenses = True
-p4a.branch = develop
+# REMOVED p4a.branch = develop — that pinned python-for-android's
+# unreleased, bleeding-edge development branch, which is where an
+# unfixed libthorvg/NDK-25b bug lives. Leaving this unset makes buildozer
+# use its own tested, stable python-for-android version instead, where
+# the SDL2/NDK/recipe combination has actually been verified to work together.
