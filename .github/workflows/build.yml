@@ -78,24 +78,26 @@ jobs:
 
       - name: Clean previous build artifacts
         run: |
-          rm -rf ~/.buildozer/android/platform/build-*
-          rm -rf ~/.buildozer/android/platform/dist
+          rm -rf $GITHUB_WORKSPACE/.buildozer/android/platform/build-*
+          rm -rf $GITHUB_WORKSPACE/.buildozer/android/platform/dist
           echo "Build storage cleaned"
 
-      - name: Pre-download problematic recipes (freetype)
+      - name: Pre-download freetype to correct storage-dir
         run: |
-          PACKAGES_DIR="$HOME/.buildozer/android/platform/packages"
-          FREETYPE_DIR="$PACKAGES_DIR/freetype"
-          mkdir -p "$FREETYPE_DIR"
-          if [ ! -f "$FREETYPE_DIR/freetype-2.14.1.tar.gz" ]; then
-            echo "Downloading freetype from mirror..."
-            wget -q --show-progress --user-agent="Mozilla/5.0" \
-              -O "$FREETYPE_DIR/freetype-2.14.1.tar.gz" \
-              "https://sourceforge.net/projects/freetype/files/freetype2/2.14.1/freetype-2.14.1.tar.gz" \
-            || echo "freetype mirror failed, will try default"
-          else
-            echo "freetype already present, skipping"
-          fi
+          # python-for-android जिस storage-dir का उपयोग करेगा (arch के अनुसार)
+          STORAGE_DIR="$GITHUB_WORKSPACE/.buildozer/android/platform/build-armeabi-v7a_arm64-v8a"
+          PACKAGES_DIR="$STORAGE_DIR/packages/freetype"
+          mkdir -p "$PACKAGES_DIR"
+          
+          echo "Downloading freetype-2.14.1.tar.gz from SourceForge mirror..."
+          wget -q --show-progress \
+            --user-agent="Mozilla/5.0" \
+            -O "$PACKAGES_DIR/freetype-2.14.1.tar.gz" \
+            "https://sourceforge.net/projects/freetype/files/freetype2/2.14.1/freetype-2.14.1.tar.gz" \
+          && echo "Download successful" || echo "Download failed, Buildozer will try default"
+          
+          # सुनिश्चित करें कि p4a फ़ाइल को पहचाने (marker फ़ाइल भी बनाएं)
+          touch "$PACKAGES_DIR/.mark-freetype-2.14.1.tar.gz"
         shell: bash
 
       - name: Build APK with Buildozer
