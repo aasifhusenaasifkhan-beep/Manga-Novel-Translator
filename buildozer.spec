@@ -6,7 +6,6 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,txt,ttf
 version = 1.1.0
 
-# Critical requirements
 requirements = python3,kivy,pillow,pypdf,pyjnius,android
 
 orientation = portrait
