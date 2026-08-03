@@ -82,15 +82,24 @@ jobs:
           rm -rf ~/.buildozer/android/platform/dist
           echo "Build storage cleaned"
 
-      - name: Build APK with Buildozer (Verbose Log)
-        run: buildozer -v android debug 2>&1 | tee buildozer.log
+      - name: Pre-download problematic recipes (freetype)
+        run: |
+          PACKAGES_DIR="$HOME/.buildozer/android/platform/packages"
+          FREETYPE_DIR="$PACKAGES_DIR/freetype"
+          mkdir -p "$FREETYPE_DIR"
+          if [ ! -f "$FREETYPE_DIR/freetype-2.14.1.tar.gz" ]; then
+            echo "Downloading freetype from mirror..."
+            wget -q --show-progress --user-agent="Mozilla/5.0" \
+              -O "$FREETYPE_DIR/freetype-2.14.1.tar.gz" \
+              "https://sourceforge.net/projects/freetype/files/freetype2/2.14.1/freetype-2.14.1.tar.gz" \
+            || echo "freetype mirror failed, will try default"
+          else
+            echo "freetype already present, skipping"
+          fi
+        shell: bash
 
-      - name: Upload Buildozer Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: buildozer-log
-          path: buildozer.log
+      - name: Build APK with Buildozer
+        run: buildozer android debug
 
       - name: Upload APK Artifact
         if: success()
