@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     env:
-      # PyPI के लिए मिरर – तू चाहे तो इसे बदल सकता है (नीचे ऑप्शन दिए हैं)
       PIP_INDEX_URL: https://pypi.org/simple
       PIP_TRUSTED_HOST: pypi.org
 
@@ -77,18 +76,24 @@ jobs:
             "build-tools;33.0.2" "platforms;android-33" "platform-tools"
           echo "ANDROID_SDK_ROOT=$BUILD_SDK" >> "$GITHUB_ENV"
 
-      # 👇 यह स्टेप हर बिल्ड से पहले पिछला अधूरा डाउनलोड साफ करेगा
       - name: Clean previous build artifacts
         run: |
           rm -rf ~/.buildozer/android/platform/build-*
           rm -rf ~/.buildozer/android/platform/dist
           echo "Build storage cleaned"
 
-      - name: Build APK with Buildozer
-        # -v हटा दिया ताकि फालतू लॉग न दिखे और एरर साफ दिखे
-        run: buildozer android debug
+      - name: Build APK with Buildozer (Verbose Log)
+        run: buildozer -v android debug 2>&1 | tee buildozer.log
+
+      - name: Upload Buildozer Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: buildozer.log
 
       - name: Upload APK Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: MangaTranslator-APK
